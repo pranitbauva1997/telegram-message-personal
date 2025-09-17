@@ -2,31 +2,30 @@ import functions_framework
 from flask import Response
 import json
 import os
-import asyncio
-from telethon.sync import TelegramClient
-from telethon.tl.functions.messages import SendMessageRequest
-from telethon.tl.types import InputPeerUserFromMessage, PeerUser
+import urllib.request
+import urllib.parse
+import urllib.error
 
 @functions_framework.http
 def send_telegram_message(request):
     """
-    HTTP Cloud Function to send a message to a Telegram user.
+    HTTP Cloud Function to send a message via Telegram Bot API.
     Args:
         request (flask.Request): The request object.
     Returns:
         Response: JSON response with status code and message.
     """
-    api_id = os.environ.get('TELEGRAM_API_ID')
-    api_hash = os.environ.get('TELEGRAM_API_HASH')
-    phone = os.environ.get('TELEGRAM_PHONE')
+    bot_token = os.environ.get('TELEGRAM_BOT_TOKEN')
+    chat_id = os.environ.get('TELEGRAM_CHAT_ID')
     api_key = os.environ.get('API_KEY')
 
-    if not api_id or not api_hash or not phone:
+    if not bot_token or not chat_id or not api_key:
         return Response(
-            response=json.dumps({'message': 'Missing environment variables'}),
+            response=json.dumps({'message': 'Missing required environment variables'}),
             status=500,
             mimetype='application/json'
         )
+
     # Check x-api-key header
     if request.headers.get('x-api-key') != api_key:
         return Response(
@@ -47,46 +46,51 @@ def send_telegram_message(request):
     message = request_json['message']
 
     try:
-        # Initialize Telethon client
-        async def send_message():
-            async with TelegramClient('user_session', int(api_id), api_hash) as client:
-                # Ensure client is authorized
-                if not await client.is_user_authorized():
-                    try:
-                        await client.start(phone=phone)
-                    except Exception as e:
-                        return {'success': False, 'error': f'Authentication failed: {str(e)}'}
+        # Send message via Telegram Bot API
+        url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+        payload = {
+            'chat_id': chat_id,
+            'text': message,
+            'parse_mode': 'HTML'  # Optional: allows basic HTML formatting
+        }
 
-                # Resolve recipient
-                recipient_phone = phone
-                try:
-                    user = await client.get_entity(recipient_phone)
-                except ValueError:
-                    return {'success': False, 'error': f'User with phone {recipient_phone} not found or not a Telegram contact'}
+        # Convert payload to URL-encoded data
+        data = urllib.parse.urlencode(payload).encode('utf-8')
 
-                # Send message
-                await client(SendMessageRequest(
-                    peer=user,
-                    message=message
-                ))
-                return {'success': True, 'error': None}
+        # Create request with timeout
+        req = urllib.request.Request(url, data=data, method='POST')
+        req.add_header('Content-Type', 'application/x-www-form-urlencoded')
 
-        # Run async function
-        result = asyncio.run(send_message())
+        with urllib.request.urlopen(req, timeout=10) as response:
+            response_data = json.loads(response.read().decode('utf-8'))
 
-        if not result['success']:
+            if response_data.get('ok'):
+                return Response(
+                    response=json.dumps({'message': 'Message sent successfully'}),
+                    status=200,
+                    mimetype='application/json'
+                )
+            else:
+                error_message = response_data.get('description', 'Unknown error')
+                return Response(
+                    response=json.dumps({'message': f'Failed to send message: {error_message}'}),
+                    status=500,
+                    mimetype='application/json'
+                )
+
+    except urllib.error.URLError as e:
+        if hasattr(e, 'reason') and 'timeout' in str(e.reason).lower():
             return Response(
-                response=json.dumps({'message': result['error']}),
+                response=json.dumps({'message': 'Request timed out'}),
                 status=500,
                 mimetype='application/json'
             )
-
-        return Response(
-            response=json.dumps({'message': 'successful'}),
-            status=200,
-            mimetype='application/json'
-        )
-
+        else:
+            return Response(
+                response=json.dumps({'message': f'Network error: {str(e)}'}),
+                status=500,
+                mimetype='application/json'
+            )
     except Exception as e:
         return Response(
             response=json.dumps({'message': f'Internal error: {str(e)}'}),

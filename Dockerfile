@@ -1,7 +1,6 @@
 FROM python:3.13
 
-# Install libsqlite3-dev to provide libsqlite3.so.0
-RUN apt-get update && apt-get install -y libsqlite3-dev && rm -rf /var/lib/apt/lists/*
+# No additional system dependencies needed for bot API
 
 # Set working directory
 WORKDIR /app
