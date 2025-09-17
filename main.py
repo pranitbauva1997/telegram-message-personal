@@ -36,6 +36,108 @@ def health_check(request):
     )
 
 @functions_framework.http
+def test_bot(request):
+    """
+    Test endpoint to validate bot token and chat access.
+    """
+    logger.info(f"Bot test requested from {request.remote_addr}")
+
+    bot_token = os.environ.get('TELEGRAM_BOT_TOKEN')
+    chat_id = os.environ.get('TELEGRAM_CHAT_ID')
+    api_key = os.environ.get('API_KEY')
+
+    if not bot_token or not chat_id or not api_key:
+        return Response(
+            response=json.dumps({'message': 'Missing required environment variables'}),
+            status=500,
+            mimetype='application/json'
+        )
+
+    # Check x-api-key header
+    if request.headers.get('x-api-key') != api_key:
+        return Response(
+            response=json.dumps({'message': 'Invalid or missing x-api-key header'}),
+            status=401,
+            mimetype='application/json'
+        )
+
+    test_results = {
+        'timestamp': datetime.now().isoformat(),
+        'bot_token_set': bool(bot_token),
+        'chat_id_set': bool(chat_id),
+        'tests': {}
+    }
+
+    # Test 1: Bot token validation
+    try:
+        logger.info("Testing bot token...")
+        getme_url = f"https://api.telegram.org/bot{bot_token}/getMe"
+        getme_req = urllib.request.Request(getme_url, method='GET')
+
+        with urllib.request.urlopen(getme_req, timeout=10) as response:
+            getme_data = json.loads(response.read().decode('utf-8'))
+            test_results['tests']['bot_token'] = {
+                'status': 'success' if getme_data.get('ok') else 'failed',
+                'bot_info': getme_data.get('result') if getme_data.get('ok') else None,
+                'error': getme_data.get('description') if not getme_data.get('ok') else None
+            }
+    except urllib.error.HTTPError as e:
+        test_results['tests']['bot_token'] = {
+            'status': 'failed',
+            'error': f'HTTP {e.code}: {e.reason}',
+            'response': e.read().decode('utf-8') if e.fp else None
+        }
+    except Exception as e:
+        test_results['tests']['bot_token'] = {
+            'status': 'failed',
+            'error': str(e)
+        }
+
+    # Test 2: Chat access validation (send a test message)
+    if test_results['tests']['bot_token']['status'] == 'success':
+        try:
+            logger.info("Testing chat access...")
+            url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+            test_payload = {
+                'chat_id': chat_id,
+                'text': f'🤖 Bot test message - {datetime.now().isoformat()}',
+                'parse_mode': 'HTML'
+            }
+            data = urllib.parse.urlencode(test_payload).encode('utf-8')
+            req = urllib.request.Request(url, data=data, method='POST')
+            req.add_header('Content-Type', 'application/x-www-form-urlencoded')
+
+            with urllib.request.urlopen(req, timeout=10) as response:
+                response_data = json.loads(response.read().decode('utf-8'))
+                test_results['tests']['chat_access'] = {
+                    'status': 'success' if response_data.get('ok') else 'failed',
+                    'message_id': response_data.get('result', {}).get('message_id') if response_data.get('ok') else None,
+                    'error': response_data.get('description') if not response_data.get('ok') else None
+                }
+        except urllib.error.HTTPError as e:
+            test_results['tests']['chat_access'] = {
+                'status': 'failed',
+                'error': f'HTTP {e.code}: {e.reason}',
+                'response': e.read().decode('utf-8') if e.fp else None
+            }
+        except Exception as e:
+            test_results['tests']['chat_access'] = {
+                'status': 'failed',
+                'error': str(e)
+            }
+    else:
+        test_results['tests']['chat_access'] = {
+            'status': 'skipped',
+            'reason': 'Bot token test failed'
+        }
+
+    return Response(
+        response=json.dumps(test_results, indent=2),
+        status=200,
+        mimetype='application/json'
+    )
+
+@functions_framework.http
 def debug_info(request):
     """
     Debug endpoint to show environment and configuration info.
@@ -113,12 +215,14 @@ def telegram_service(request):
         return health_check(request)
     elif path == 'debug':
         return debug_info(request)
+    elif path == 'test':
+        return test_bot(request)
     else:
         logger.warning(f"Unknown path requested: {path}")
         return Response(
             response=json.dumps({
                 'message': f'Unknown endpoint: {path}',
-                'available_endpoints': ['/', '/send', '/health', '/debug']
+                'available_endpoints': ['/', '/send', '/health', '/debug', '/test']
             }),
             status=404,
             mimetype='application/json'
@@ -173,9 +277,51 @@ def send_telegram_message(request):
     try:
         # Send message via Telegram Bot API
         url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-        logger.info(f"Telegram API URL: {url}")
+        logger.info(f"Telegram API URL: https://api.telegram.org/bot{bot_token[:10]}.../sendMessage")
         logger.info(f"Chat ID: {chat_id}")
         logger.info(f"Message length: {len(message)}")
+        logger.info(f"Message preview: {message[:100]}{'...' if len(message) > 100 else ''}")
+
+        # First, let's test the bot token by calling getMe
+        logger.info("Testing bot token with getMe endpoint...")
+        getme_url = f"https://api.telegram.org/bot{bot_token}/getMe"
+        try:
+            getme_req = urllib.request.Request(getme_url, method='GET')
+            with urllib.request.urlopen(getme_req, timeout=10) as getme_response:
+                getme_data = json.loads(getme_response.read().decode('utf-8'))
+                logger.info(f"Bot verification result: {getme_data}")
+                if not getme_data.get('ok'):
+                    logger.error(f"Bot token verification failed: {getme_data}")
+                    return Response(
+                        response=json.dumps({
+                            'message': f'Bot token verification failed: {getme_data.get("description", "Unknown error")}',
+                            'error_code': getme_data.get('error_code'),
+                            'timestamp': datetime.now().isoformat()
+                        }),
+                        status=500,
+                        mimetype='application/json'
+                    )
+        except urllib.error.HTTPError as e:
+            logger.error(f"Bot token verification HTTP error: {e.code} - {e.reason}")
+            logger.error(f"Response: {e.read().decode('utf-8') if e.fp else 'No response body'}")
+            return Response(
+                response=json.dumps({
+                    'message': f'Bot token verification failed: HTTP {e.code} - {e.reason}',
+                    'timestamp': datetime.now().isoformat()
+                }),
+                status=500,
+                mimetype='application/json'
+            )
+        except Exception as e:
+            logger.error(f"Bot token verification error: {str(e)}")
+            return Response(
+                response=json.dumps({
+                    'message': f'Bot token verification error: {str(e)}',
+                    'timestamp': datetime.now().isoformat()
+                }),
+                status=500,
+                mimetype='application/json'
+            )
 
         payload = {
             'chat_id': chat_id,
@@ -191,7 +337,7 @@ def send_telegram_message(request):
         # Create request with timeout
         req = urllib.request.Request(url, data=data, method='POST')
         req.add_header('Content-Type', 'application/x-www-form-urlencoded')
-        logger.info("Making request to Telegram API...")
+        logger.info("Making request to Telegram API sendMessage...")
 
         with urllib.request.urlopen(req, timeout=10) as response:
             logger.info(f"Telegram API response status: {response.status}")
