@@ -15,4 +15,4 @@ COPY . .
 
 # Run Functions Framework
 EXPOSE $PORT
-CMD ["functions-framework", "--target", "send_telegram_message", "--port", "$PORT"]
+CMD functions-framework --target send_telegram_message --port $PORT
