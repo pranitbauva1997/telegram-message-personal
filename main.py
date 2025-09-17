@@ -16,8 +16,19 @@ def send_telegram_message(request):
     Returns:
         Response: JSON response with status code and message.
     """
+    api_id = os.environ.get('TELEGRAM_API_ID')
+    api_hash = os.environ.get('TELEGRAM_API_HASH')
+    phone = os.environ.get('TELEGRAM_PHONE')
+    api_key = os.environ.get('API_KEY')
+
+    if not api_id or not api_hash or not phone:
+        return Response(
+            response=json.dumps({'message': 'Missing environment variables'}),
+            status=500,
+            mimetype='application/json'
+        )
     # Check x-api-key header
-    if request.headers.get('x-api-key') != 'secret-stuff':
+    if request.headers.get('x-api-key') != api_key:
         return Response(
             response=json.dumps({'message': 'Invalid or missing x-api-key header'}),
             status=401,
@@ -34,16 +45,6 @@ def send_telegram_message(request):
         )
 
     message = request_json['message']
-    api_id = os.environ.get('TELEGRAM_API_ID')
-    api_hash = os.environ.get('TELEGRAM_API_HASH')
-    phone = os.environ.get('TELEGRAM_PHONE')
-
-    if not api_id or not api_hash or not phone:
-        return Response(
-            response=json.dumps({'message': 'Missing environment variables'}),
-            status=500,
-            mimetype='application/json'
-        )
 
     try:
         # Initialize Telethon client

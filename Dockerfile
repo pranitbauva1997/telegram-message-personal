@@ -14,4 +14,5 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Run Functions Framework
-CMD ["functions-framework", "--target", "send_telegram_message"]
+EXPOSE $PORT
+CMD ["functions-framework", "--target", "send_telegram_message", "--port", "$PORT"]
