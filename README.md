@@ -2,6 +2,8 @@
 
 This is a Google Cloud Run service that sends messages to Telegram using the Bot API and Functions Framework.
 
+I have a bunch of services/cron jobs running and I like to be notified if something failed on my phone. This simple utility does the job perfectly.
+
 ## Setup
 
 ### 1. Create a Telegram Bot
